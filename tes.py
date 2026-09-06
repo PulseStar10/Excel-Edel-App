@@ -1,20 +1,26 @@
 import datetime
 import json
 import os
+import uuid
 from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 import openpyxl
 import pandas as pd
 import streamlit as st
 
-# --- CONFIGURATION & PERSISTENCE ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(BASE_DIR, "conveyance_store.json")
-TEMPLATE_PATH = os.path.join(BASE_DIR, "Local Conveyance Template.xlsx")
-
 st.set_page_config(
     page_title="Local Conveyance App", page_icon="🚗", layout="wide"
 )
+
+# --- ISOLATED PER-USER PERSISTENCE ---
+# Automatically assign a unique private ID to the URL if not present
+if "user" not in st.query_params:
+  st.query_params["user"] = str(uuid.uuid4())
+
+user_id = st.query_params["user"]
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_FILE = os.path.join(BASE_DIR, f"conveyance_store_{user_id}.json")
+TEMPLATE_PATH = os.path.join(BASE_DIR, "Local Conveyance Template.xlsx")
 
 # --- MOBILE RESPONSIVE CSS ---
 st.markdown(
@@ -142,7 +148,7 @@ def convert_number_to_words(n):
   return result + " Only"
 
 
-# Initialize session state for records
+# Initialize session state from this user's private JSON file
 if "records" not in st.session_state:
   st.session_state.records = load_data()
 
@@ -151,8 +157,8 @@ if "form_version" not in st.session_state:
 
 st.title("🚗 Local Conveyance Tracker & Excel Generator")
 st.markdown(
-    "Enter your daily travel details below. Your data is saved automatically so"
-    " you can close the app and return anytime!"
+    "Enter your daily travel details below. Your data is saved automatically"
+    " and persists across reloads privately!"
 )
 
 # --- SIDEBAR: EMPLOYEE & BANKING DETAILS ---
@@ -184,11 +190,11 @@ with st.sidebar:
 
   st.divider()
   st.markdown("### 📊 Data Management")
-  if st.button("🗑️ Clear All Past Data", type="secondary"):
+  if st.button("🗑️ Clear My Saved Data", type="secondary"):
     st.session_state.records = []
     if os.path.exists(DATA_FILE):
       os.remove(DATA_FILE)
-    st.success("All past data cleared!")
+    st.success("Your saved data cleared!")
     st.rerun()
 
 # --- MAIN FORM: ADD NEW ENTRY ---
@@ -283,7 +289,6 @@ st.subheader("📋 Past Days' Records")
 if st.session_state.records:
   df_records = pd.DataFrame(st.session_state.records)
 
-  # Simultaneous Total Amount Display (as requested, amazing and unchanged)[cite: 4]
   total_amount_live = (
       df_records["Amount"].sum() if "Amount" in df_records.columns else 0.0
   )
@@ -298,7 +303,6 @@ if st.session_state.records:
 
   display_df = df_records.drop(columns=["id"])
 
-  # Fully editable table without Mode of Travel
   edited_df = st.data_editor(
       display_df,
       use_container_width=True,
@@ -326,7 +330,6 @@ if st.session_state.records:
       },
   )
 
-  # Automatically sync edits back to session state and persist to JSON storage
   updated_records = []
   for idx, row in edited_df.iterrows():
     original_entry = st.session_state.records[idx]
@@ -412,7 +415,6 @@ if st.session_state.records:
 
       for col_num, val in enumerate(row_data, 1):
         cell = ws.cell(row=current_row, column=col_num, value=val)
-        # Center-align Date column (Column 1 / 'A')
         if col_num == 1:
           cell.alignment = Alignment(horizontal="center", vertical="center")
         if col_num == 5:
@@ -427,7 +429,7 @@ if st.session_state.records:
     ws["G50"] = "=SUM(G17:G49)"
     ws["G50"].number_format = "₹#,##0.00"
 
-    # 5. Reimbursement in Words at Row 51 (Label in A51, Amount in Words in C51 - 2 cells to the right)
+    # 5. Reimbursement in Words at Row 51
     words_str = convert_number_to_words(total_amount)
     ws["A51"] = "Please reimburse Rupees (in words):"
     ws["C51"] = words_str
@@ -467,6 +469,4 @@ if st.session_state.records:
           ),
       )
 else:
-  st.info(
-      "No travel records found yet. Fill out the form above to get started!"
-  )
+  st.info("No travel records found yet. Fill out the form above to get started!")
