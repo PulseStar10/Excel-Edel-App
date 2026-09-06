@@ -1,7 +1,6 @@
 import datetime
 import json
 import os
-import uuid
 from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 import openpyxl
@@ -12,14 +11,7 @@ st.set_page_config(
     page_title="Local Conveyance App", page_icon="🚗", layout="wide"
 )
 
-# --- ISOLATED PER-USER PERSISTENCE ---
-# Automatically assign a unique private ID to the URL if not present
-if "user" not in st.query_params:
-  st.query_params["user"] = str(uuid.uuid4())
-
-user_id = st.query_params["user"]
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(BASE_DIR, f"conveyance_store_{user_id}.json")
 TEMPLATE_PATH = os.path.join(BASE_DIR, "Local Conveyance Template.xlsx")
 
 # --- MOBILE RESPONSIVE CSS ---
@@ -36,21 +28,6 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
-
-
-def load_data():
-  if os.path.exists(DATA_FILE):
-    try:
-      with open(DATA_FILE, "r") as f:
-        return json.load(f)
-    except Exception:
-      return []
-  return []
-
-
-def save_data(data):
-  with open(DATA_FILE, "w") as f:
-    json.dump(data, f, indent=4)
 
 
 def convert_number_to_words(n):
@@ -148,17 +125,28 @@ def convert_number_to_words(n):
   return result + " Only"
 
 
-# Initialize session state from this user's private JSON file
+# --- LOAD/SAVE RECORDS VIA URL PARAMS (PERSISTENT & ISOLATED) ---
 if "records" not in st.session_state:
-  st.session_state.records = load_data()
+  if "data" in st.query_params:
+    try:
+      st.session_state.records = json.loads(st.query_params["data"])
+    except Exception:
+      st.session_state.records = []
+  else:
+    st.session_state.records = []
+
+
+def save_records():
+  st.query_params["data"] = json.dumps(st.session_state.records)
+
 
 if "form_version" not in st.session_state:
   st.session_state.form_version = 0
 
 st.title("🚗 Local Conveyance Tracker & Excel Generator")
 st.markdown(
-    "Enter your daily travel details below. Your data is saved automatically"
-    " and persists across reloads privately!"
+    "Enter your daily travel details below. Data persists securely across"
+    " reloads!"
 )
 
 # --- SIDEBAR: EMPLOYEE & BANKING DETAILS ---
@@ -190,11 +178,11 @@ with st.sidebar:
 
   st.divider()
   st.markdown("### 📊 Data Management")
-  if st.button("🗑️ Clear My Saved Data", type="secondary"):
+  if st.button("🗑️ Clear My Data", type="secondary"):
     st.session_state.records = []
-    if os.path.exists(DATA_FILE):
-      os.remove(DATA_FILE)
-    st.success("Your saved data cleared!")
+    if "data" in st.query_params:
+      del st.query_params["data"]
+    st.success("Data cleared!")
     st.rerun()
 
 # --- MAIN FORM: ADD NEW ENTRY ---
@@ -277,7 +265,7 @@ if st.button("💾 Save Entry", type="primary"):
   }
 
   st.session_state.records.append(new_entry)
-  save_data(st.session_state.records)
+  save_records()
   st.session_state.form_version += 1
   st.success("Entry saved successfully!")
   st.rerun()
@@ -349,7 +337,7 @@ if st.session_state.records:
 
   if updated_records != st.session_state.records:
     st.session_state.records = updated_records
-    save_data(st.session_state.records)
+    save_records()
 
   selected_row = st.selectbox(
       "Select an entry to delete if needed:",
@@ -364,7 +352,7 @@ if st.session_state.records:
 
   if st.button("❌ Delete Selected Entry"):
     removed = st.session_state.records.pop(selected_row)
-    save_data(st.session_state.records)
+    save_records()
     st.success(
         f"Deleted entry from {removed['Date']} ({removed['From Location']} ➔"
         f" {removed['To Location']})"
@@ -381,7 +369,6 @@ if st.session_state.records:
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
     ws = wb["June 26"]
 
-    # 1. Fill Employee & Period Metadata directly into template cells
     ws["B4"] = emp_name
     ws["B6"] = emp_code
     ws["B8"] = entity_name
@@ -389,12 +376,10 @@ if st.session_state.records:
     ws["B12"] = lob
     ws["B14"] = period
 
-    # 2. Clear out sample/placeholder data rows in the table (Rows 17 to 49)
     for r in range(17, 50):
       for c in range(1, 8):
         ws.cell(row=r, column=c).value = None
 
-    # 3. Insert actual session records starting at row 17
     current_row = 17
     total_amount = 0.0
 
@@ -424,21 +409,17 @@ if st.session_state.records:
 
       current_row += 1
 
-    # 4. Total Amount Row fixed at Row 50 per template
     ws["C50"] = "Total Amount"
     ws["G50"] = "=SUM(G17:G49)"
     ws["G50"].number_format = "₹#,##0.00"
 
-    # 5. Reimbursement in Words at Row 51
     words_str = convert_number_to_words(total_amount)
     ws["A51"] = "Please reimburse Rupees (in words):"
     ws["C51"] = words_str
 
-    # 6. Fill Bank Details into exact template rows
     ws["B55"] = bank_name
     ws["B56"] = bank_acc
 
-    # 7. Update Signatures & Dates at exact template rows
     ws["B61"] = emp_name
     ws["B62"] = datetime.date.today().strftime("%d/%m/%Y")
 
