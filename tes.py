@@ -207,22 +207,21 @@ with col1:
   )
 
 with col2:
-  purpose = st.text_area(
+  reason_choice = st.selectbox(
       "Particulars / Purpose",
-      key=f"input_purpose_{fv}",
-      placeholder="Reason for travel...",
+      ["Meeting", "Other"],
+      index=0,
+      key=f"input_reason_choice_{fv}",
   )
-  mode_travel = st.selectbox(
-      "Mode of Travel",
-      [
-          "Personal Vehicle (Car/Bike)",
-          "Cab",
-          "Auto",
-          "Bus/Train",
-          "Metro",
-      ],
-      key=f"input_mode_{fv}",
-  )
+  if reason_choice == "Other":
+    custom_purpose = st.text_input(
+        "Specify Custom Reason",
+        key=f"input_custom_purpose_{fv}",
+        placeholder="Type reason...",
+    )
+    purpose = custom_purpose
+  else:
+    purpose = "Meeting"
 
 with col3:
   distance = st.number_input(
@@ -266,7 +265,6 @@ if st.button("💾 Save Entry", type="primary"):
       "Particulars": purpose,
       "From Location": from_loc,
       "To Location": to_loc,
-      "Mode of Travel": mode_travel,
       "Kilometres": dist_val,
       "Rate/KM": r_val,
       "Amount": calc_amount,
@@ -278,14 +276,77 @@ if st.button("💾 Save Entry", type="primary"):
   st.success("Entry saved successfully!")
   st.rerun()
 
-# --- DISPLAY PAST RECORDS ---
+# --- DISPLAY & INLINE EDITABLE RECORDS & TOTAL ---
 st.divider()
 st.subheader("📋 Past Days' Records")
 
 if st.session_state.records:
   df_records = pd.DataFrame(st.session_state.records)
+
+  # Simultaneous Total Amount Display (as requested, amazing and unchanged)[cite: 4]
+  total_amount_live = (
+      df_records["Amount"].sum() if "Amount" in df_records.columns else 0.0
+  )
+  st.metric(
+      label="💰 Simultaneous Total Claim Amount", value=f"₹{total_amount_live:,.2f}"
+  )
+
+  st.markdown(
+      "💡 *Click directly on any cell in the table below to edit locations,"
+      " amounts, or particulars right then and there!*"
+  )
+
   display_df = df_records.drop(columns=["id"])
-  st.dataframe(display_df, use_container_width=True)
+
+  # Fully editable table without Mode of Travel
+  edited_df = st.data_editor(
+      display_df,
+      use_container_width=True,
+      key="editable_conveyance_table",
+      num_rows="fixed",
+      column_config={
+          "Particulars": st.column_config.TextColumn(
+              "Particulars / Purpose", required=True
+          ),
+          "From Location": st.column_config.TextColumn(
+              "From Location", required=True
+          ),
+          "To Location": st.column_config.TextColumn(
+              "To Location", required=True
+          ),
+          "Kilometres": st.column_config.NumberColumn(
+              "Kilometres", min_value=0.0, format="%g"
+          ),
+          "Rate/KM": st.column_config.NumberColumn(
+              "Rate/KM", min_value=0.0, format="₹%g"
+          ),
+          "Amount": st.column_config.NumberColumn(
+              "Amount", min_value=0.0, format="₹%g"
+          ),
+      },
+  )
+
+  # Automatically sync edits back to session state and persist to JSON storage
+  updated_records = []
+  for idx, row in edited_df.iterrows():
+    original_entry = st.session_state.records[idx]
+    updated_entry = {
+        "id": original_entry["id"],
+        "Date": str(row["Date"]),
+        "Particulars": str(row["Particulars"]),
+        "From Location": str(row["From Location"]),
+        "To Location": str(row["To Location"]),
+        "Kilometres": (
+            float(row["Kilometres"]) if pd.notna(row["Kilometres"]) else 0.0
+        ),
+        "Rate/KM": float(row["Rate/KM"]) if pd.notna(row["Rate/KM"]) else 0.0,
+        "Amount": float(row["Amount"]) if pd.notna(row["Amount"]) else 0.0,
+    }
+    updated_records.append(updated_entry)
+
+  if updated_records != st.session_state.records:
+    st.session_state.records = updated_records
+    save_data(st.session_state.records)
 
   selected_row = st.selectbox(
       "Select an entry to delete if needed:",
